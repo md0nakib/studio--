@@ -91,44 +91,49 @@ export function applySketchFilter(
   );
   
   if (filterType === 'pencil') {
-    // Layer 1: Fine details
-    const inverted1 = getInverted(grayImageData.data);
-    tempCtx.putImageData(new ImageData(inverted1, width, height), 0, 0);
-    tempCtx.filter = `blur(0.5px)`;
-    tempCtx.drawImage(tempCanvas, 0, 0);
-    const blurred1 = tempCtx.getImageData(0, 0, width, height).data;
-    
-    const dodge1Data = new Uint8ClampedArray(grayImageData.data.length);
-    for (let i = 0; i < dodge1Data.length; i += 4) {
-      const val = colorDodge(blurred1[i], grayImageData.data[i]);
-      dodge1Data[i] = dodge1Data[i+1] = dodge1Data[i+2] = val;
-      dodge1Data[i+3] = originalImageData.data[i+3];
-    }
-    
-    // Layer 2: Softer shading
-    const inverted2 = getInverted(grayImageData.data);
-    tempCtx.putImageData(new ImageData(inverted2, width, height), 0, 0);
-    tempCtx.filter = `blur(${1 + intensity * 4}px)`;
-    tempCtx.drawImage(tempCanvas, 0, 0);
-    const blurred2 = tempCtx.getImageData(0, 0, width, height).data;
+    const invertedData = getInverted(grayImageData.data);
+    const invertedImage = new ImageData(invertedData, width, height);
 
-    const dodge2Data = new Uint8ClampedArray(grayImageData.data.length);
-    for (let i = 0; i < dodge2Data.length; i += 4) {
-      const val = colorDodge(blurred2[i], grayImageData.data[i]);
-      dodge2Data[i] = dodge2Data[i+1] = dodge2Data[i+2] = val;
-      dodge2Data[i+3] = originalImageData.data[i+3];
+    // Layer 1: Fine details
+    tempCtx.putImageData(invertedImage, 0, 0);
+    tempCtx.filter = `blur(1px)`;
+    tempCtx.drawImage(tempCanvas, 0, 0);
+    const blurredFine = tempCtx.getImageData(0, 0, width, height).data;
+    
+    const dodgeFineData = new Uint8ClampedArray(grayImageData.data.length);
+    for (let i = 0; i < dodgeFineData.length; i += 4) {
+      const val = colorDodge(blurredFine[i], grayImageData.data[i]);
+      dodgeFineData[i] = dodgeFineData[i+1] = dodgeFineData[i+2] = val;
+      dodgeFineData[i+3] = 255;
     }
     
-    // Blend the layers
-    const finalData = blend(dodge1Data, dodge2Data, 0.5 + intensity * 0.2);
+    // Layer 2: Broad strokes/shading
+    tempCtx.putImageData(invertedImage, 0, 0);
+    tempCtx.filter = `blur(15px)`;
+    tempCtx.drawImage(tempCanvas, 0, 0);
+    const blurredBroad = tempCtx.getImageData(0, 0, width, height).data;
+
+    const dodgeBroadData = new Uint8ClampedArray(grayImageData.data.length);
+    for (let i = 0; i < dodgeBroadData.length; i += 4) {
+      const val = colorDodge(blurredBroad[i], grayImageData.data[i]);
+      dodgeBroadData[i] = dodgeBroadData[i+1] = dodgeBroadData[i+2] = val;
+      dodgeBroadData[i+3] = 255;
+    }
     
-    // Post-processing
-    const contrast = 1.1 + intensity * 0.2;
-    for (let i = 0; i < finalData.length; i += 4) {
-      let value = finalData[i];
-      value = ((value / 255 - 0.5) * contrast + 0.5) * 255;
-      value = Math.max(0, Math.min(255, value));
-      finalData[i] = finalData[i + 1] = finalData[i + 2] = value;
+    // Blend the fine and broad layers using a "multiply" like effect
+    const finalData = new Uint8ClampedArray(grayImageData.data.length);
+    for (let i = 0; i < finalData.length; i+=4) {
+        const fine = dodgeFineData[i] / 255;
+        const broad = dodgeBroadData[i] / 255;
+        let val = fine * broad * 255;
+
+        // Apply intensity and contrast
+        const contrast = 1 + intensity * 0.5;
+        val = ((val / 255 - 0.5) * contrast + 0.5) * 255;
+        val = Math.max(0, Math.min(255, val));
+      
+        finalData[i] = finalData[i + 1] = finalData[i + 2] = val;
+        finalData[i + 3] = originalImageData.data[i+3];
     }
 
     ctx.putImageData(new ImageData(finalData, width, height), 0, 0);
