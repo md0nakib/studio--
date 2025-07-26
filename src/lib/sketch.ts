@@ -30,7 +30,26 @@ function getInverted(data: Uint8ClampedArray) {
 
 function colorDodge(front: number, back: number) {
   if (front === 255) return front;
-  return Math.min(255, (back << 8) / (255 - front));
+  const result = (back << 8) / (255 - front);
+  return result > 255 ? 255 : result;
+}
+
+function blend(
+  base: Uint8ClampedArray,
+  layer: Uint8ClampedArray,
+  opacity: number
+) {
+  const blendedData = new Uint8ClampedArray(base.length);
+  for (let i = 0; i < base.length; i += 4) {
+    const baseVal = base[i];
+    const layerVal = layer[i];
+    const blendedVal = baseVal + (layerVal - baseVal) * opacity;
+    blendedData[i] = blendedVal;
+    blendedData[i + 1] = blendedVal;
+    blendedData[i + 2] = blendedVal;
+    blendedData[i + 3] = base[i + 3];
+  }
+  return blendedData;
 }
 
 export function applySketchFilter(
@@ -57,72 +76,93 @@ export function applySketchFilter(
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return;
   
-  // Hidden canvas for processing steps
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = width;
   tempCanvas.height = height;
   const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
   if (!tempCtx) return;
 
-  // 1. Draw original image
   tempCtx.drawImage(image, 0, 0, width, height);
   const originalImageData = tempCtx.getImageData(0, 0, width, height);
-
-  // 2. Grayscale
-  const grayImageData = tempCtx.createImageData(width, height);
-  grayImageData.data.set(getGrayscale(originalImageData.data));
-
-  // 3. Invert grayscale
-  const invertedImageData = tempCtx.createImageData(width, height);
-  invertedImageData.data.set(getInverted(grayImageData.data));
-  tempCtx.putImageData(invertedImageData, 0, 0);
-
-  // 4. Blur inverted
-  const blurAmount = filterType === 'pencil' 
-    ? intensity * 5 + 1
-    : intensity * 15 + 1;
-  tempCtx.filter = `blur(${blurAmount}px)`;
-  tempCtx.drawImage(tempCanvas, 0, 0);
-  tempCtx.filter = 'none';
-  const blurredImageData = tempCtx.getImageData(0, 0, width, height);
-
-  // 5. Color Dodge Blend
-  const finalImageData = ctx.createImageData(width, height);
-  const finalData = finalImageData.data;
-  const grayData = grayImageData.data;
-  const blurredData = blurredImageData.data;
-
-  for (let i = 0; i < finalData.length; i += 4) {
-    const blendedValue = colorDodge(blurredData[i], grayData[i]);
-    finalData[i] = blendedValue;
-    finalData[i + 1] = blendedValue;
-    finalData[i + 2] = blendedValue;
-    finalData[i + 3] = originalImageData.data[i + 3]; // Preserve alpha
-  }
+  const grayImageData = new ImageData(
+    getGrayscale(originalImageData.data),
+    width,
+    height
+  );
   
-  // Post-processing for pencil effect
   if (filterType === 'pencil') {
-    const pencilContrast = 1.2 + (intensity * 0.3);
-    for (let i = 0; i < finalData.length; i+=4) {
-      let value = finalData[i];
-      // A bit of contrast
-      value = ((value / 255 - 0.5) * pencilContrast + 0.5) * 255;
-      // Clamp values
-      value = Math.max(0, Math.min(255, value));
-      finalData[i] = finalData[i+1] = finalData[i+2] = value;
+    // Layer 1: Fine details
+    const inverted1 = getInverted(grayImageData.data);
+    tempCtx.putImageData(new ImageData(inverted1, width, height), 0, 0);
+    tempCtx.filter = `blur(0.5px)`;
+    tempCtx.drawImage(tempCanvas, 0, 0);
+    const blurred1 = tempCtx.getImageData(0, 0, width, height).data;
+    
+    const dodge1Data = new Uint8ClampedArray(grayImageData.data.length);
+    for (let i = 0; i < dodge1Data.length; i += 4) {
+      const val = colorDodge(blurred1[i], grayImageData.data[i]);
+      dodge1Data[i] = dodge1Data[i+1] = dodge1Data[i+2] = val;
+      dodge1Data[i+3] = originalImageData.data[i+3];
     }
-  }
-  
-  // Charcoal effect adjustment
-  if (filterType === 'charcoal') {
-    const contrast = 1 + (intensity * 0.5);
-    const threshold = 1 - intensity; // Lower threshold for more black
+    
+    // Layer 2: Softer shading
+    const inverted2 = getInverted(grayImageData.data);
+    tempCtx.putImageData(new ImageData(inverted2, width, height), 0, 0);
+    tempCtx.filter = `blur(${1 + intensity * 4}px)`;
+    tempCtx.drawImage(tempCanvas, 0, 0);
+    const blurred2 = tempCtx.getImageData(0, 0, width, height).data;
+
+    const dodge2Data = new Uint8ClampedArray(grayImageData.data.length);
+    for (let i = 0; i < dodge2Data.length; i += 4) {
+      const val = colorDodge(blurred2[i], grayImageData.data[i]);
+      dodge2Data[i] = dodge2Data[i+1] = dodge2Data[i+2] = val;
+      dodge2Data[i+3] = originalImageData.data[i+3];
+    }
+    
+    // Blend the layers
+    const finalData = blend(dodge1Data, dodge2Data, 0.5 + intensity * 0.2);
+    
+    // Post-processing
+    const contrast = 1.1 + intensity * 0.2;
     for (let i = 0; i < finalData.length; i += 4) {
       let value = finalData[i];
-      // Increase contrast
+      value = ((value / 255 - 0.5) * contrast + 0.5) * 255;
+      value = Math.max(0, Math.min(255, value));
+      finalData[i] = finalData[i + 1] = finalData[i + 2] = value;
+    }
+
+    ctx.putImageData(new ImageData(finalData, width, height), 0, 0);
+    
+  } else if (filterType === 'charcoal') {
+    const invertedImageData = tempCtx.createImageData(width, height);
+    invertedImageData.data.set(getInverted(grayImageData.data));
+    tempCtx.putImageData(invertedImageData, 0, 0);
+
+    const blurAmount = intensity * 15 + 1;
+    tempCtx.filter = `blur(${blurAmount}px)`;
+    tempCtx.drawImage(tempCanvas, 0, 0);
+    tempCtx.filter = 'none';
+    const blurredImageData = tempCtx.getImageData(0, 0, width, height);
+
+    const finalImageData = ctx.createImageData(width, height);
+    const finalData = finalImageData.data;
+    const grayData = grayImageData.data;
+    const blurredData = blurredImageData.data;
+
+    for (let i = 0; i < finalData.length; i += 4) {
+      const blendedValue = colorDodge(blurredData[i], grayData[i]);
+      finalData[i] = blendedValue;
+      finalData[i + 1] = blendedValue;
+      finalData[i + 2] = blendedValue;
+      finalData[i + 3] = originalImageData.data[i + 3];
+    }
+    
+    const contrast = 1 + (intensity * 0.5);
+    const threshold = 1 - intensity;
+    for (let i = 0; i < finalData.length; i += 4) {
+      let value = finalData[i];
       value = ((value / 255 - 0.5) * contrast + 0.5) * 255;
       
-      // Add a bit of thresholding for darker blacks
       if(value / 255 < threshold) {
         value = value * 0.8;
       }
@@ -132,7 +172,7 @@ export function applySketchFilter(
       finalData[i + 1] = value;
       finalData[i + 2] = value;
     }
+    
+    ctx.putImageData(finalImageData, 0, 0);
   }
-
-  ctx.putImageData(finalImageData, 0, 0);
 }
