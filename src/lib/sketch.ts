@@ -34,24 +34,6 @@ function colorDodge(front: number, back: number) {
   return result > 255 ? 255 : result;
 }
 
-function blend(
-  base: Uint8ClampedArray,
-  layer: Uint8ClampedArray,
-  opacity: number
-) {
-  const blendedData = new Uint8ClampedArray(base.length);
-  for (let i = 0; i < base.length; i += 4) {
-    const baseVal = base[i];
-    const layerVal = layer[i];
-    const blendedVal = baseVal + (layerVal - baseVal) * opacity;
-    blendedData[i] = blendedVal;
-    blendedData[i + 1] = blendedVal;
-    blendedData[i + 2] = blendedVal;
-    blendedData[i + 3] = base[i + 3];
-  }
-  return blendedData;
-}
-
 export function applySketchFilter(
   canvas: HTMLCanvasElement,
   image: HTMLImageElement,
@@ -92,50 +74,54 @@ export function applySketchFilter(
   
   if (filterType === 'pencil') {
     const invertedData = getInverted(grayImageData.data);
-    const invertedImage = new ImageData(invertedData, width, height);
-
-    // Layer 1: Fine details
-    tempCtx.putImageData(invertedImage, 0, 0);
-    tempCtx.filter = `blur(1px)`;
-    tempCtx.drawImage(tempCanvas, 0, 0);
-    const blurredFine = tempCtx.getImageData(0, 0, width, height).data;
     
+    // Fine details layer
+    tempCtx.putImageData(new ImageData(invertedData, width, height), 0, 0);
+    tempCtx.filter = 'blur(1.5px)';
+    tempCtx.drawImage(tempCanvas, 0, 0);
+    const blurredFineData = tempCtx.getImageData(0, 0, width, height).data;
+
     const dodgeFineData = new Uint8ClampedArray(grayImageData.data.length);
     for (let i = 0; i < dodgeFineData.length; i += 4) {
-      const val = colorDodge(blurredFine[i], grayImageData.data[i]);
-      dodgeFineData[i] = dodgeFineData[i+1] = dodgeFineData[i+2] = val;
-      dodgeFineData[i+3] = 255;
+        const val = colorDodge(blurredFineData[i], grayImageData.data[i]);
+        dodgeFineData[i] = dodgeFineData[i+1] = dodgeFineData[i+2] = val;
+        dodgeFineData[i+3] = 255;
     }
-    
-    // Layer 2: Broad strokes/shading
-    tempCtx.putImageData(invertedImage, 0, 0);
-    tempCtx.filter = `blur(15px)`;
+
+    // Broad shading layer
+    tempCtx.putImageData(new ImageData(invertedData, width, height), 0, 0);
+    tempCtx.filter = 'blur(20px)';
     tempCtx.drawImage(tempCanvas, 0, 0);
-    const blurredBroad = tempCtx.getImageData(0, 0, width, height).data;
+    const blurredBroadData = tempCtx.getImageData(0, 0, width, height).data;
 
     const dodgeBroadData = new Uint8ClampedArray(grayImageData.data.length);
     for (let i = 0; i < dodgeBroadData.length; i += 4) {
-      const val = colorDodge(blurredBroad[i], grayImageData.data[i]);
-      dodgeBroadData[i] = dodgeBroadData[i+1] = dodgeBroadData[i+2] = val;
-      dodgeBroadData[i+3] = 255;
+        const val = colorDodge(blurredBroadData[i], grayImageData.data[i]);
+        dodgeBroadData[i] = dodgeBroadData[i+1] = dodgeBroadData[i+2] = val;
+        dodgeBroadData[i+3] = 255;
     }
-    
-    // Blend the fine and broad layers using a "multiply" like effect
+
+    // Blend the layers using a multiply effect
     const finalData = new Uint8ClampedArray(grayImageData.data.length);
-    for (let i = 0; i < finalData.length; i+=4) {
+    for (let i = 0; i < finalData.length; i += 4) {
         const fine = dodgeFineData[i] / 255;
         const broad = dodgeBroadData[i] / 255;
         let val = fine * broad * 255;
 
-        // Apply intensity and contrast
-        const contrast = 1 + intensity * 0.5;
+        // Apply intensity and a subtle contrast curve
+        const contrast = 1.1 + (intensity * 0.4);
         val = ((val / 255 - 0.5) * contrast + 0.5) * 255;
-        val = Math.max(0, Math.min(255, val));
-      
-        finalData[i] = finalData[i + 1] = finalData[i + 2] = val;
-        finalData[i + 3] = originalImageData.data[i+3];
-    }
 
+        // Add some noise for texture
+        const noise = (Math.random() - 0.5) * 20 * (1 - intensity);
+        val += noise;
+        
+        val = Math.max(0, Math.min(255, val));
+
+        finalData[i] = finalData[i+1] = finalData[i+2] = val;
+        finalData[i+3] = originalImageData.data[i+3];
+    }
+    
     ctx.putImageData(new ImageData(finalData, width, height), 0, 0);
     
   } else if (filterType === 'charcoal') {
