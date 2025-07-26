@@ -78,7 +78,9 @@ export function applySketchFilter(
   tempCtx.putImageData(invertedImageData, 0, 0);
 
   // 4. Blur inverted
-  const blurAmount = intensity * (filterType === 'charcoal' ? 15 : 10) + 1;
+  const blurAmount = filterType === 'pencil' 
+    ? intensity * 5 + 1
+    : intensity * 15 + 1;
   tempCtx.filter = `blur(${blurAmount}px)`;
   tempCtx.drawImage(tempCanvas, 0, 0);
   tempCtx.filter = 'none';
@@ -96,6 +98,19 @@ export function applySketchFilter(
     finalData[i + 1] = blendedValue;
     finalData[i + 2] = blendedValue;
     finalData[i + 3] = originalImageData.data[i + 3]; // Preserve alpha
+  }
+  
+  // Post-processing for pencil effect
+  if (filterType === 'pencil') {
+    const pencilContrast = 1.2 + (intensity * 0.3);
+    for (let i = 0; i < finalData.length; i+=4) {
+      let value = finalData[i];
+      // A bit of contrast
+      value = ((value / 255 - 0.5) * pencilContrast + 0.5) * 255;
+      // Clamp values
+      value = Math.max(0, Math.min(255, value));
+      finalData[i] = finalData[i+1] = finalData[i+2] = value;
+    }
   }
   
   // Charcoal effect adjustment
@@ -118,7 +133,6 @@ export function applySketchFilter(
       finalData[i + 2] = value;
     }
   }
-
 
   ctx.putImageData(finalImageData, 0, 0);
 }
